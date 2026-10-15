@@ -1,0 +1,21 @@
+[tools]
+go = "1.27.2"
+terraform = "1.16.5"
+
+[env]
+GOTOOLCHAIN = "local"
+
+[tasks.test]
+run = ["go test -race -count=1 ./...", "python3 -m unittest discover -s scripts -p 'test_*.py'"]
+
+[tasks.vet]
+run = "go vet ./..."
+
+[tasks.build]
+run = "go build -mod=readonly -trimpath -buildvcs=false -o build/terraform-provider-s3sync ."
+
+[tasks.release-build]
+run = "python3 scripts/release.py build"
+
+[tasks.release]
+run = "python3 scripts/release.py publish"
