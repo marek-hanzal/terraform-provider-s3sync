@@ -5,7 +5,7 @@ S3-compatible storage. One `s3sync_files` resource owns a file manifest rather
 than one Terraform resource per object. AWS SDK for Go v2 owns signing, retries,
 timeouts and stream replay. No consumer-specific publication logic lives here.
 
-The provider address is `marek-hanzal/s3sync`. Version `0.1.1` is a prototype,
+The provider address is `marek-hanzal/s3sync`. Version `0.1.2` is a prototype,
 distributed through immutable GitHub release assets and a Terraform filesystem
 mirror, without Terraform Registry publication or GitHub Actions.
 
@@ -14,7 +14,7 @@ mirror, without Terraform Registry publication or GitHub Actions.
 ```hcl
 terraform {
   required_providers {
-    s3sync = { source = "marek-hanzal/s3sync", version = "= 0.1.1" }
+    s3sync = { source = "marek-hanzal/s3sync", version = "= 0.1.2" }
   }
 }
 
@@ -88,27 +88,33 @@ Removed manifest keys are retained. `s3sync_files` destruction retains bodies by
 default; `delete_on_destroy = true` deletes only acknowledged inventory keys.
 It never acquires deletion ownership of other objects from a listing.
 
-`s3sync_prune` explicitly owns **every file in one exclusive nonempty prefix**:
+`s3sync_prune` owns deletion inside one nonempty prefix. By default it owns
+**every file in that prefix**; optional `key_pattern` narrows ownership:
 
 ```hcl
 resource "s3sync_prune" "assets" {
   bucket = var.bucket
   prefix = "app/assets/"
   keep   = keys(s3sync_files.assets.files)
+  # Optional Go regex, matched against keys relative to app/assets/.
+  key_pattern = "^[a-f0-9]{64}\\.(avif|ogg)$"
   # Put publication/cache-invalidation dependencies here as appropriate.
   depends_on = [s3sync_files.assets]
 }
 ```
 
-An empty `keep` set deletes every file in that prefix during apply. Objects
-outside the prefix and directory markers are preserved. A failed deletion stops
-cleanup; a later apply lists actual remaining objects and retries. Read reports
+An empty `keep` set deletes every matching file in that prefix during apply.
+`key_pattern` defaults to `.*`; Go regular expressions use substring matching,
+so anchor with `^` and `$` to select complete relative keys. Invalid expressions
+fail validation before writes. Nonmatching keys, objects outside the prefix and
+directory markers are preserved. A failed deletion stops cleanup; a later apply
+lists actual remaining objects and retries. Read reports
 obsolete keys in `pending`, while the planned value is empty after cleanup.
 Destroying the prune resource does not delete anything.
 
 Use independent file sets and explicit `depends_on` for assets → manifests →
 HTML → cache invalidation → prune. CDN invalidation belongs to the CDN provider.
-Do not overlap prune prefixes with data owned by other resources or applications.
+Keep each prune resource's matching keys separate from other deletion owners.
 
 ## Local development and releases
 
@@ -135,8 +141,8 @@ publishes only the complete release. Rerunning the same clean commit recovers
 an interrupted release; divergent tags or existing bytes are rejected.
 
 Download the host asset from the exact release, verify its SHA-256, and rename
-it to `terraform-provider-s3sync_v0.1.1` inside
-`<mirror>/registry.terraform.io/marek-hanzal/s3sync/0.1.1/<os>_<arch>/`.
+it to `terraform-provider-s3sync_v0.1.2` inside
+`<mirror>/registry.terraform.io/marek-hanzal/s3sync/0.1.2/<os>_<arch>/`.
 Use a task-specific Terraform CLI config with a `filesystem_mirror` for that
 address and exclude it from `direct`; never require this source checkout at
 consumer runtime. See [release provenance](docs/release-notes.md).

@@ -20,10 +20,14 @@ against an isolated S3 HTTP fixture, and release interruption regressions.
 | Recovery | Failed Update persists successful acknowledgements, including opaque ETags; the next apply uploads only outstanding files. |
 | Terraform sequencing | Asset failure blocks dependent documents and cleanup; document failure blocks cleanup; recovery completes publication before pruning. |
 | Cancellation | Terraform SIGINT cancels an in-flight request and prevents dependent document publication. |
-| Object ownership | Removed inputs retain bodies; default destroy retains bodies; opted-in destroy deletes only acknowledged keys. Exclusive-prefix prune preserves outside keys and directory markers. |
+| Object ownership | Removed inputs retain bodies; default destroy retains bodies; opted-in destroy deletes only acknowledged keys. Prune preserves outside keys and directory markers; optional key-pattern ownership preserves nonmatching and nested keys, rejects invalid patterns before writes, and settles after matching drift cleanup. |
 | Existing object adoption | Explicit MD5/SHA-256 modes validate body identity and content type; default opaque mode never guesses an ETag hash algorithm. |
 | Diagnostics | Arbitrary SDK/server messages, signed URLs and configured credentials do not escape through failure diagnostics. |
 | Release interruption | Partial uploads remain draft; retry reuses accepted bytes; divergent tags/assets are rejected; only a complete verified release becomes public. |
+
+Version `0.1.2` adds cleanup key-pattern filtering. Its evidence is the local
+actual-Terraform lifecycle suite; the earlier independent S3 and live Bunny runs
+below predate that filter. No new live writes were made for this enhancement.
 
 ## Independent S3 runtime
 

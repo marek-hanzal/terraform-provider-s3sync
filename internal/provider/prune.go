@@ -2,13 +2,14 @@ package provider
 
 import (
 	"context"
-	"sort"
+	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/marek-hanzal/terraform-provider-s3sync/internal/objects"
@@ -16,23 +17,25 @@ import (
 
 type pruneResource struct{ client *objects.Client }
 type pruneModel struct {
-	ID      types.String `tfsdk:"id"`
-	Bucket  types.String `tfsdk:"bucket"`
-	Prefix  types.String `tfsdk:"prefix"`
-	Keep    types.Set    `tfsdk:"keep"`
-	Pending types.Set    `tfsdk:"pending"`
+	ID         types.String `tfsdk:"id"`
+	Bucket     types.String `tfsdk:"bucket"`
+	Prefix     types.String `tfsdk:"prefix"`
+	KeyPattern types.String `tfsdk:"key_pattern"`
+	Keep       types.Set    `tfsdk:"keep"`
+	Pending    types.Set    `tfsdk:"pending"`
 }
 
 func (r *pruneResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_prune"
 }
 func (r *pruneResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = schema.Schema{Description: "Deletes every non-kept key in an explicitly exclusive prefix during apply. Sequence after publication/cache invalidation. Destroy only forgets this cleanup gate.", Attributes: map[string]schema.Attribute{
-		"id":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-		"bucket":  schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-		"prefix":  schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Exclusive nonempty relative prefix ending in '/'. This resource owns deletion of all objects inside it."},
-		"keep":    schema.SetAttribute{Required: true, ElementType: types.StringType, Description: "Relative object keys to retain inside this prefix. An empty set explicitly removes every object inside the prefix."},
-		"pending": schema.SetAttribute{Computed: true, ElementType: types.StringType, Description: "Observed obsolete keys; the planned value is empty after successful cleanup."},
+	resp.Schema = schema.Schema{Description: "Deletes matching non-kept keys in an explicitly owned prefix during apply. Sequence after publication/cache invalidation. Destroy only forgets this cleanup gate.", Attributes: map[string]schema.Attribute{
+		"id":          schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+		"bucket":      schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"prefix":      schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Nonempty relative prefix ending in '/'. This resource owns deletion of matching objects inside it."},
+		"key_pattern": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(".*"), Description: "Go regular expression matched against relative object keys. Default matches every file; anchor with ^ and $ to match whole keys. Nonmatching files are preserved."},
+		"keep":        schema.SetAttribute{Required: true, ElementType: types.StringType, Description: "Relative object keys to retain inside this prefix. An empty set explicitly removes every matching object inside the prefix."},
+		"pending":     schema.SetAttribute{Computed: true, ElementType: types.StringType, Description: "Observed obsolete keys; the planned value is empty after successful cleanup."},
 	}}
 }
 func (r *pruneResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -43,6 +46,9 @@ func (r *pruneResource) ValidateConfig(ctx context.Context, req resource.Validat
 	resp.Diagnostics.Append(req.Config.Get(ctx, &model)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if !model.KeyPattern.IsUnknown() {
+		compileKeyPattern(model.KeyPattern, &resp.Diagnostics)
 	}
 	if !model.Bucket.IsUnknown() && !model.Prefix.IsUnknown() {
 		if err := objects.ValidateDestination(model.Bucket.ValueString(), model.Prefix.ValueString(), true); err != nil {
@@ -66,6 +72,17 @@ func (r *pruneResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 	if req.Plan.Raw.IsNull() {
 		return
 	}
+	var model pruneModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &model)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !model.KeyPattern.IsUnknown() {
+		compileKeyPattern(model.KeyPattern, &resp.Diagnostics)
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("pending"), types.SetValueMust(types.StringType, nil))...)
 }
 func (r *pruneResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -80,6 +97,7 @@ func (r *pruneResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 	var keep []string
 	resp.Diagnostics.Append(model.Keep.ElementsAs(ctx, &keep, false)...)
+	keyPattern := compileKeyPattern(model.KeyPattern, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -88,14 +106,7 @@ func (r *pruneResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		resp.Diagnostics.AddError("S3 cleanup refresh failed", err.Error())
 		return
 	}
-	for _, key := range keep {
-		delete(remote, key)
-	}
-	pending := make([]string, 0, len(remote))
-	for key := range remote {
-		pending = append(pending, key)
-	}
-	sort.Strings(pending)
+	pending := objects.PruneKeys(remote, keep, keyPattern)
 	model.Pending, _ = types.SetValueFrom(ctx, types.StringType, pending)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
 }
@@ -106,10 +117,11 @@ func (r *pruneResource) prune(ctx context.Context, model *pruneModel, diagnostic
 	}
 	var keep []string
 	diagnostics.Append(model.Keep.ElementsAs(ctx, &keep, false)...)
+	keyPattern := compileKeyPattern(model.KeyPattern, diagnostics)
 	if diagnostics.HasError() {
 		return
 	}
-	if _, err := r.client.Prune(ctx, model.Bucket.ValueString(), model.Prefix.ValueString(), keep); err != nil {
+	if _, err := r.client.Prune(ctx, model.Bucket.ValueString(), model.Prefix.ValueString(), keep, keyPattern); err != nil {
 		diagnostics.AddError("S3 cleanup failed", err.Error())
 		return
 	}
@@ -141,4 +153,16 @@ func (r *pruneResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
 }
 func (r *pruneResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
+}
+
+func compileKeyPattern(value types.String, diagnostics *diag.Diagnostics) *regexp.Regexp {
+	if value.IsUnknown() {
+		diagnostics.AddAttributeError(path.Root("key_pattern"), "Unknown cleanup key pattern", "key_pattern must be known before refresh or cleanup.")
+		return nil
+	}
+	pattern, err := regexp.Compile(value.ValueString())
+	if err != nil {
+		diagnostics.AddAttributeError(path.Root("key_pattern"), "Invalid cleanup key pattern", err.Error())
+	}
+	return pattern
 }

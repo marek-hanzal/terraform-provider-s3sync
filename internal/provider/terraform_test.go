@@ -31,6 +31,7 @@ type terraformFixture struct {
 	concurrency, maxAttempts                       int
 	documents, prune, deleteOnDestroy              bool
 	etagHash                                       string
+	pruneKeyPattern                                string
 	endpoint, accessKey, secretKey, bucket, region string
 }
 
@@ -110,7 +111,11 @@ func (tf *terraformFixture) writeConfig() {
 		resources["s3sync_files"].(map[string]any)["documents"] = map[string]any{"bucket": tf.bucket, "prefix": "site/", "files": map[string]any{"index.html": map[string]any{"source": source, "sha256": hex.EncodeToString(hash[:]), "content_type": "text/html"}}, "depends_on": []string{"s3sync_files.assets"}}
 	}
 	if tf.prune {
-		resources["s3sync_prune"] = map[string]any{"obsolete": map[string]any{"bucket": tf.bucket, "prefix": "assets/", "keep": keep, "depends_on": []string{"s3sync_files.documents"}}}
+		prune := map[string]any{"bucket": tf.bucket, "prefix": "assets/", "keep": keep, "depends_on": []string{"s3sync_files.documents"}}
+		if tf.pruneKeyPattern != "" {
+			prune["key_pattern"] = tf.pruneKeyPattern
+		}
+		resources["s3sync_prune"] = map[string]any{"obsolete": prune}
 	}
 	config := map[string]any{"terraform": map[string]any{"required_providers": map[string]any{"s3sync": map[string]any{"source": "marek-hanzal/s3sync", "version": "= 0.1.0"}}}, "provider": map[string]any{"s3sync": map[string]any{"endpoint": tf.endpoint, "region": tf.region, "access_key": tf.accessKey, "secret_key": tf.secretKey, "etag_hash": tf.etagHash, "max_attempts": tf.maxAttempts, "request_timeout_seconds": 20}}, "resource": resources}
 	if tf.etagHash == "" {

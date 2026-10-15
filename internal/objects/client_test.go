@@ -22,7 +22,7 @@ func TestPaginatedListingAndExclusivePrunePreserveOtherOwners(t *testing.T) {
 	if err != nil || len(remote) != 4 || store.Stats().List != 2 {
 		t.Fatalf("pagination: objects=%d stats=%+v err=%v", len(remote), store.Stats(), err)
 	}
-	deleted, err := client.Prune(context.Background(), "bucket", "owned/", []string{"b"})
+	deleted, err := client.Prune(context.Background(), "bucket", "owned/", []string{"b"}, nil)
 	if err != nil || deleted != 3 || store.Stats().Delete != 3 {
 		t.Fatalf("prune: deleted=%d stats=%+v err=%v", deleted, store.Stats(), err)
 	}
