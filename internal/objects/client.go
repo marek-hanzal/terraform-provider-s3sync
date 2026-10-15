@@ -78,7 +78,8 @@ func New(ctx context.Context, config Config) (*Client, error) {
 		Credentials: credentials.NewStaticCredentialsProvider(config.AccessKey, config.SecretKey, ""),
 		HTTPClient:  awshttp.NewBuildableClient().WithTimeout(config.RequestTimeout),
 		Retryer: func() aws.Retryer {
-			return retry.NewStandard(func(options *retry.StandardOptions) { options.MaxAttempts = config.MaxAttempts })
+			// A newly provisioned S3 zone can exist in the control plane before its bucket is reachable.
+			return retry.AddWithErrorCodes(retry.NewStandard(func(options *retry.StandardOptions) { options.MaxAttempts = config.MaxAttempts }), "NoSuchBucket")
 		},
 	}, func(options *s3.Options) {
 		if config.Endpoint != "" {

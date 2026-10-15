@@ -16,6 +16,7 @@ against an isolated S3 HTTP fixture, and release interruption regressions.
 | Remote refresh | ListObjectsV2 pagination crosses 1,000 objects; missing or changed bodies produce a repair plan. Plan/refresh performs no writes. |
 | Saved-plan source mutation | Every local SHA-256 is checked before remote writes, including acknowledged files; mutated inputs fail admission. |
 | Network failure | SDK retries 503 and lost connections with complete replayed bodies; exhausted retries stop new admission and drain already admitted work. |
+| New bucket propagation | Only `NoSuchBucket` extends SDK retry classification. Recovery, exhausted/disabled budgets and PUT body replay are checked; missing-object/general 404 and permission failures do not gain retries. |
 | Recovery | Failed Update persists successful acknowledgements, including opaque ETags; the next apply uploads only outstanding files. |
 | Terraform sequencing | Asset failure blocks dependent documents and cleanup; document failure blocks cleanup; recovery completes publication before pruning. |
 | Cancellation | Terraform SIGINT cancels an in-flight request and prevents dependent document publication. |
@@ -56,14 +57,54 @@ The complete local scenario took 60.56 seconds, including cold publication,
 unchanged apply, diff, drift repair, prune, destroy and test-bucket cleanup.
 This is local integration evidence, not a Bunny/WAN throughput benchmark.
 
+## Live Bunny evidence
+
+The downloaded `v0.1.0` macOS arm64 release passed actual Terraform acceptance
+against a temporary Bunny S3 zone in Frankfurt (`de`). Direct cold publication
+uploaded 1,660 files / 543,293,450 bytes plus HTML in 246.18 seconds. Unchanged
+plan/apply used five bulk listings with no PUT, DELETE or per-object HEAD.
+Same-sized local diff and remote body drift each repaired with one PUT.
+
+A local signing proxy forwarded successful requests to Bunny and injected 503
+and connection loss. Complete body replay, exhausted retries, partial-state
+recovery, real Terraform SIGINT, HTML/cleanup barriers and default retention
+passed. All test zones were destroyed; a separate account-API read confirmed
+their absence with HTTP 404. Directory markers were excluded from file counts,
+then the complete desired key set was independently checked. Sample single-part
+ETags matched MD5; this observation does not change the portable opaque default.
+
+New zones briefly returned `NoSuchBucket` after control-plane creation. The
+`v0.1.0` harness waited for S3 readiness. Version `0.1.1` adds this exact code to
+the existing SDK retry budget; focused regressions cover readiness and exhaustion.
+
+The opt-in `TestTerraformFreshBunnyZone` also passed three fresh-zone runs with
+the `0.1.1` source: one Terraform apply creates the S3 zone and immediately
+uploads its first file, with unknown endpoint/password resolved through the
+provider dependency graph. There is no external readiness request, waiter or
+sleep. An independent S3 client checks the body, and Terraform destroy plus an
+account-API HTTP 404 check confirms each test zone was removed.
+
+To rerun this **live account mutation**, explicitly set `S3SYNC_TEST_BUNNY=1`,
+`BUNNYNET_API_KEY` and `S3SYNC_TEST_BUNNY_PROVIDER_BINARY` to the absolute path of
+the host Bunny Terraform provider `0.19.1`. Optionally select a downloaded release
+through `S3SYNC_TEST_PROVIDER_BINARY`, then run:
+
+```sh
+mise exec -- go test -race -count=1 -v ./internal/provider \
+  -run '^TestTerraformFreshBunnyZone$' -timeout 15m
+```
+
+The test creates and destroys three uniquely named storage zones without CDN,
+using temporary local state. It requires permission to provision and delete
+storage zones. Failed cleanup preserves private recovery state outside its
+temporary work directory and reports the zone name and recovery path.
+
 ## Compatibility limits and adoption gate
 
-No live Bunny or AWS account writes have been performed. Local S3 compatibility
-does not establish Bunny's signing region, credentials, ETag algorithm, checksum
-handling or production rate limits. Before switching Serakki, run an isolated
-live Bunny-prefix acceptance using the released binary: cold upload, no-op,
-one-file diff, drift repair, interrupted apply recovery and explicit cleanup.
-Use opaque ETags until the service's single-part hash contract is verified.
+No live AWS account writes have been performed. The Bunny acceptance above does
+not establish compatibility with every region, storage tier or production load.
+Serakki's deployment has not been switched. Keep opaque ETags unless the service
+guarantees the configured single-part hash contract.
 
 The prototype uses single-part PutObject with explicit SHA-256, bounded workers
 and SDK retries. It does not support multipart uploads, temporary session

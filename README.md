@@ -5,7 +5,7 @@ S3-compatible storage. One `s3sync_files` resource owns a file manifest rather
 than one Terraform resource per object. AWS SDK for Go v2 owns signing, retries,
 timeouts and stream replay. No consumer-specific publication logic lives here.
 
-The provider address is `marek-hanzal/s3sync`. Version `0.1.0` is a prototype,
+The provider address is `marek-hanzal/s3sync`. Version `0.1.1` is a prototype,
 distributed through immutable GitHub release assets and a Terraform filesystem
 mirror, without Terraform Registry publication or GitHub Actions.
 
@@ -14,7 +14,7 @@ mirror, without Terraform Registry publication or GitHub Actions.
 ```hcl
 terraform {
   required_providers {
-    s3sync = { source = "marek-hanzal/s3sync", version = "= 0.1.0" }
+    s3sync = { source = "marek-hanzal/s3sync", version = "= 0.1.1" }
   }
 }
 
@@ -49,6 +49,11 @@ and allows 1–64 workers. Admission stops on failure and drains admitted work.
 Errors include safe operation/key/code diagnostics rather than raw SDK errors.
 
 Provider `max_attempts` defaults to 5 and `request_timeout_seconds` to 120.
+The exact S3 `NoSuchBucket` code is retryable within that attempt budget, using
+SDK exponential backoff and cancellation. This covers short control-plane to
+S3 propagation after provisioning a zone. A permanently missing bucket still
+fails after the budget; generic 404/`NotFound`, `NoSuchKey` and `AccessDenied`
+are not added to the retry policy. Set `max_attempts = 1` to disable retries.
 Credentials come only from explicit attributes or `S3SYNC_ACCESS_KEY` and
 `S3SYNC_SECRET_KEY`. Sensitive configured credentials remain in protected
 Terraform state/plans; media bodies never do. Custom endpoints use path-style
@@ -130,8 +135,8 @@ publishes only the complete release. Rerunning the same clean commit recovers
 an interrupted release; divergent tags or existing bytes are rejected.
 
 Download the host asset from the exact release, verify its SHA-256, and rename
-it to `terraform-provider-s3sync_v0.1.0` inside
-`<mirror>/registry.terraform.io/marek-hanzal/s3sync/0.1.0/<os>_<arch>/`.
+it to `terraform-provider-s3sync_v0.1.1` inside
+`<mirror>/registry.terraform.io/marek-hanzal/s3sync/0.1.1/<os>_<arch>/`.
 Use a task-specific Terraform CLI config with a `filesystem_mirror` for that
 address and exclude it from `direct`; never require this source checkout at
 consumer runtime. See [release provenance](docs/release-notes.md).
