@@ -1,8 +1,7 @@
 # Prototype validation
 
 Validated locally on macOS arm64 with Go 1.27.2 and Terraform 1.16.5.
-The prototype has no GitHub Actions workflows. Existing Serakki deployment has
-not been switched to this provider.
+The prototype has no GitHub Actions workflows.
 
 ## Executable evidence
 
@@ -15,6 +14,7 @@ against an isolated S3 HTTP fixture, and release interruption regressions.
 | Cold upload and incremental publication | Initial files upload; unchanged apply performs zero PUT/DELETE/HEAD; a same-sized local body change performs one PUT. |
 | Remote refresh | ListObjectsV2 pagination crosses 1,000 objects; missing or changed bodies produce a repair plan. Plan/refresh performs no writes. |
 | Saved-plan source mutation | Every local SHA-256 is checked before remote writes, including acknowledged files; mutated inputs fail admission. |
+| Checkout relocation | Relative source manifests keep their state/digest when the provider-local root moves and the old root is removed. Real Terraform returns a no-change plan, writes no objects and preserves a `replace_triggered_by` consumer. Changed bytes upload from the new root; missing roots, ambiguous sources and checksum mismatches fail before writes. |
 | Network failure | SDK retries 503 and lost connections with complete replayed bodies; exhausted retries stop new admission and drain already admitted work. |
 | New bucket propagation | Only `NoSuchBucket` extends SDK retry classification. Recovery, exhausted/disabled budgets and PUT body replay are checked; missing-object/general 404 and permission failures do not gain retries. |
 | Recovery | Failed Update persists successful acknowledgements, including opaque ETags; the next apply uploads only outstanding files. |
@@ -25,9 +25,10 @@ against an isolated S3 HTTP fixture, and release interruption regressions.
 | Diagnostics | Arbitrary SDK/server messages, signed URLs and configured credentials do not escape through failure diagnostics. |
 | Release interruption | Partial uploads remain draft; retry reuses accepted bytes; divergent tags/assets are rejected; only a complete verified release becomes public. |
 
-Version `0.1.2` adds cleanup key-pattern filtering. Its evidence is the local
-actual-Terraform lifecycle suite; the earlier independent S3 and live Bunny runs
-below predate that filter. No new live writes were made for this enhancement.
+Versions `0.1.2` and `0.1.3` add cleanup key-pattern filtering and provider-local
+source roots. Their evidence is the local actual-Terraform lifecycle suite;
+the earlier independent S3 and live Bunny runs below predate these features.
+No new live writes were made for these enhancements.
 
 ## Independent S3 runtime
 
@@ -107,7 +108,7 @@ temporary work directory and reports the zone name and recovery path.
 
 No live AWS account writes have been performed. The Bunny acceptance above does
 not establish compatibility with every region, storage tier or production load.
-Serakki's deployment has not been switched. Keep opaque ETags unless the service
+Keep opaque ETags unless the service
 guarantees the configured single-part hash contract.
 
 The prototype uses single-part PutObject with explicit SHA-256, bounded workers

@@ -113,6 +113,37 @@ func TestEverySourceIsVerifiedBeforeAnyUploadIncludingAcknowledgedFiles(t *testi
 	}
 }
 
+func TestRelativeSourcesRequireExplicitRootAndRejectAmbiguityBeforeWrites(t *testing.T) {
+	store := teststore.New(t)
+	client := testClient(t, store, "opaque")
+	file := fixtureFile(t, []byte("body"), "text/plain")
+	directory := filepath.Dir(file.Source)
+	file.Source = "source"
+	request := Request{Bucket: "bucket", Files: map[string]File{"asset": file}}
+	if _, err := client.Reconcile(context.Background(), request); err == nil || !strings.Contains(err.Error(), "requires source_directory") {
+		t.Fatalf("relative source used an ambient directory: %v", err)
+	}
+	client.sourceDirectory = directory
+	for _, source := range []string{"", ".", "../source", "a/../source", "./source", "a//source", "a/", `a\source`, "C:source", "line\nbreak"} {
+		invalid := file
+		invalid.Source = source
+		request.Files["asset"] = invalid
+		if _, err := client.Reconcile(context.Background(), request); err == nil {
+			t.Errorf("accepted ambiguous relative source %q", source)
+		}
+	}
+	if stats := store.Stats(); stats.Put != 0 || stats.Delete != 0 || stats.List != 0 {
+		t.Fatalf("invalid local sources reached storage: %+v", stats)
+	}
+	request.Files["asset"] = file
+	if _, err := client.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Files["asset"].Source != "source" {
+		t.Fatal("admission rewrote the configured relative source")
+	}
+}
+
 func TestNonregularSourceCannotBecomeAnEmptyRemoteFile(t *testing.T) {
 	store := teststore.New(t)
 	file := File{Source: t.TempDir(), SHA256: strings.Repeat("0", 64)}

@@ -62,6 +62,14 @@ func TestAWSDefaultEndpointDoesNotRequireCustomOrigin(t *testing.T) {
 	}
 }
 
+func TestSourceDirectoryMustBeAbsoluteWithoutAmbientResolution(t *testing.T) {
+	for _, directory := range []string{"relative", ".", "../parent", "/line\nbreak"} {
+		if _, err := New(context.Background(), Config{AccessKey: "fixture", SecretKey: "fixture", SourceDirectory: directory}); err == nil {
+			t.Errorf("accepted ambiguous source directory %q", directory)
+		}
+	}
+}
+
 func testClient(t *testing.T, store *teststore.Store, hash string) *Client {
 	t.Helper()
 	client, err := New(context.Background(), Config{

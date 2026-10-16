@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,13 +20,14 @@ import (
 )
 
 type Config struct {
-	Endpoint       string
-	Region         string
-	AccessKey      string
-	SecretKey      string
-	ETagHash       string
-	MaxAttempts    int
-	RequestTimeout time.Duration
+	Endpoint        string
+	Region          string
+	AccessKey       string
+	SecretKey       string
+	ETagHash        string
+	SourceDirectory string
+	MaxAttempts     int
+	RequestTimeout  time.Duration
 }
 
 type s3API interface {
@@ -36,13 +38,17 @@ type s3API interface {
 }
 
 type Client struct {
-	api      s3API
-	etagHash string
+	api             s3API
+	etagHash        string
+	sourceDirectory string
 }
 
 func New(ctx context.Context, config Config) (*Client, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, safeError("configure", "", err)
+	}
+	if config.SourceDirectory != "" && (!filepath.IsAbs(config.SourceDirectory) || hasControl(config.SourceDirectory)) {
+		return nil, fmt.Errorf("source_directory must be an absolute local path without control characters")
 	}
 	if config.Endpoint != "" {
 		endpoint, err := url.Parse(config.Endpoint)
@@ -89,7 +95,7 @@ func New(ctx context.Context, config Config) (*Client, error) {
 		options.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		options.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
-	return &Client{api: api, etagHash: config.ETagHash}, nil
+	return &Client{api: api, etagHash: config.ETagHash, sourceDirectory: config.SourceDirectory}, nil
 }
 
 func (client *Client) List(ctx context.Context, bucket, prefix string) (map[string]Remote, error) {

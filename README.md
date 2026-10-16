@@ -5,7 +5,7 @@ S3-compatible storage. One `s3sync_files` resource owns a file manifest rather
 than one Terraform resource per object. AWS SDK for Go v2 owns signing, retries,
 timeouts and stream replay. No consumer-specific publication logic lives here.
 
-The provider address is `marek-hanzal/s3sync`. Version `0.1.2` is a prototype,
+The provider address is `marek-hanzal/s3sync`. Version `0.1.3` is a prototype,
 distributed through immutable GitHub release assets and a Terraform filesystem
 mirror, without Terraform Registry publication or GitHub Actions.
 
@@ -14,15 +14,16 @@ mirror, without Terraform Registry publication or GitHub Actions.
 ```hcl
 terraform {
   required_providers {
-    s3sync = { source = "marek-hanzal/s3sync", version = "= 0.1.2" }
+    s3sync = { source = "marek-hanzal/s3sync", version = "= 0.1.3" }
   }
 }
 
 provider "s3sync" {
-  endpoint   = var.s3_endpoint
-  region     = var.s3_region
-  access_key = var.s3_access_key
-  secret_key = var.s3_secret_key
+  endpoint         = var.s3_endpoint
+  region           = var.s3_region
+  access_key       = var.s3_access_key
+  secret_key       = var.s3_secret_key
+  source_directory = abspath("${path.module}/dist/assets")
 }
 
 resource "s3sync_files" "assets" {
@@ -30,7 +31,7 @@ resource "s3sync_files" "assets" {
   prefix = "app/assets/"
   files = {
     for key in fileset("${path.module}/dist/assets", "**") : key => {
-      source = abspath("${path.module}/dist/assets/${key}")
+      source = key
       sha256 = filesha256("${path.module}/dist/assets/${key}")
     }
   }
@@ -43,6 +44,18 @@ symlinks and nonregular sources are rejected. Every local SHA-256 is verified
 before any remote write, including files that would be skipped. Changed files
 between saved plan and apply fail admission. Keep sources stable through apply;
 PutObject includes the expected SHA-256 for server-side body validation.
+
+`source` may be absolute or a slash-separated relative path. Relative sources
+require an explicit absolute provider `source_directory`; the current working
+directory is never used as a fallback. Empty and dot segments, backslashes,
+colons and control characters are rejected in relative sources. The directory
+is resolved only for local apply I/O, not stored in resource state or included
+in the manifest digest. Moving an identical relative manifest to a new checkout
+therefore produces no resource update or dependent replacement. Absolute sources
+remain supported without a directory. Plan and refresh do not open local sources;
+changing only the directory does not schedule an apply or validate its contents.
+When reconciliation is scheduled, every source is checked against its declared
+hash before any write, including acknowledged files that would be skipped.
 
 `content_type` defaults to `application/octet-stream`. `concurrency` defaults to 8
 and allows 1–64 workers. Admission stops on failure and drains admitted work.
@@ -141,8 +154,8 @@ publishes only the complete release. Rerunning the same clean commit recovers
 an interrupted release; divergent tags or existing bytes are rejected.
 
 Download the host asset from the exact release, verify its SHA-256, and rename
-it to `terraform-provider-s3sync_v0.1.2` inside
-`<mirror>/registry.terraform.io/marek-hanzal/s3sync/0.1.2/<os>_<arch>/`.
+it to `terraform-provider-s3sync_v0.1.3` inside
+`<mirror>/registry.terraform.io/marek-hanzal/s3sync/0.1.3/<os>_<arch>/`.
 Use a task-specific Terraform CLI config with a `filesystem_mirror` for that
 address and exclude it from `direct`; never require this source checkout at
 consumer runtime. See [release provenance](docs/release-notes.md).

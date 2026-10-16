@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -172,6 +173,13 @@ func (client *Client) prepare(ctx context.Context, files map[string]File) (map[s
 			return nil, safeError("verify source", key, err)
 		}
 		file := files[key]
+		if !filepath.IsAbs(file.Source) {
+			if client.sourceDirectory == "" {
+				return nil, fmt.Errorf("verify source object %q failed (relative source requires source_directory)", key)
+			}
+			// Resolve a copy for I/O; configured paths and the resource digest stay relative.
+			file.Source = filepath.Join(client.sourceDirectory, filepath.FromSlash(file.Source))
+		}
 		source, info, err := openSource(file.Source)
 		if err != nil {
 			return nil, fmt.Errorf("verify source object %q failed (%s)", key, err)

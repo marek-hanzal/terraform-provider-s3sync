@@ -30,6 +30,7 @@ func (p *syncProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 		"access_key":              schema.StringAttribute{Optional: true, Sensitive: true, Description: "Explicit access key, or S3SYNC_ACCESS_KEY. No ambient AWS credential chain."},
 		"secret_key":              schema.StringAttribute{Optional: true, Sensitive: true, Description: "Explicit secret key, or S3SYNC_SECRET_KEY."},
 		"etag_hash":               schema.StringAttribute{Optional: true, Description: "opaque (default), md5, or sha256. Explicit hash modes permit adopting matching single-part objects; use only when the storage guarantees that ETag algorithm."},
+		"source_directory":        schema.StringAttribute{Optional: true, Description: "Absolute local root for relative files.source paths. Resolved only during apply; omitted roots require absolute sources."},
 		"max_attempts":            schema.Int64Attribute{Optional: true, Description: "AWS SDK maximum attempts per request, including the initial attempt; defaults to 5."},
 		"request_timeout_seconds": schema.Int64Attribute{Optional: true, Description: "HTTP request timeout, defaults to 120 seconds."},
 	}}
@@ -37,22 +38,27 @@ func (p *syncProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 
 func (p *syncProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	var model struct {
-		Endpoint    types.String `tfsdk:"endpoint"`
-		Region      types.String `tfsdk:"region"`
-		AccessKey   types.String `tfsdk:"access_key"`
-		SecretKey   types.String `tfsdk:"secret_key"`
-		ETagHash    types.String `tfsdk:"etag_hash"`
-		MaxAttempts types.Int64  `tfsdk:"max_attempts"`
-		Timeout     types.Int64  `tfsdk:"request_timeout_seconds"`
+		Endpoint        types.String `tfsdk:"endpoint"`
+		Region          types.String `tfsdk:"region"`
+		AccessKey       types.String `tfsdk:"access_key"`
+		SecretKey       types.String `tfsdk:"secret_key"`
+		ETagHash        types.String `tfsdk:"etag_hash"`
+		SourceDirectory types.String `tfsdk:"source_directory"`
+		MaxAttempts     types.Int64  `tfsdk:"max_attempts"`
+		Timeout         types.Int64  `tfsdk:"request_timeout_seconds"`
 	}
 	resp.Diagnostics.Append(req.Config.Get(ctx, &model)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if model.Endpoint.IsUnknown() || model.Region.IsUnknown() || model.AccessKey.IsUnknown() || model.SecretKey.IsUnknown() || model.ETagHash.IsUnknown() || model.MaxAttempts.IsUnknown() || model.Timeout.IsUnknown() {
+	if model.Endpoint.IsUnknown() || model.Region.IsUnknown() || model.AccessKey.IsUnknown() || model.SecretKey.IsUnknown() || model.ETagHash.IsUnknown() || model.SourceDirectory.IsUnknown() || model.MaxAttempts.IsUnknown() || model.Timeout.IsUnknown() {
 		return // Terraform may create the storage credentials earlier in this apply.
 	}
-	config := objects.Config{Endpoint: model.Endpoint.ValueString(), Region: model.Region.ValueString(), AccessKey: model.AccessKey.ValueString(), SecretKey: model.SecretKey.ValueString(), ETagHash: model.ETagHash.ValueString(), MaxAttempts: 5, RequestTimeout: 120 * time.Second}
+	config := objects.Config{Endpoint: model.Endpoint.ValueString(), Region: model.Region.ValueString(), AccessKey: model.AccessKey.ValueString(), SecretKey: model.SecretKey.ValueString(), ETagHash: model.ETagHash.ValueString(), SourceDirectory: model.SourceDirectory.ValueString(), MaxAttempts: 5, RequestTimeout: 120 * time.Second}
+	if !model.SourceDirectory.IsNull() && config.SourceDirectory == "" {
+		resp.Diagnostics.AddError("Invalid source directory", "source_directory must be an absolute local path when configured.")
+		return
+	}
 	if config.Region == "" {
 		config.Region = "us-east-1"
 	}

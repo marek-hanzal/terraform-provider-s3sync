@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/marek-hanzal/terraform-provider-s3sync/internal/teststore"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -15,6 +16,57 @@ import (
 // ordering and partial failure cannot be proved by calling resource methods.
 func TestTerraformLifecycle(t *testing.T) {
 	binary := buildProvider(t)
+	t.Run("relative_sources_survive_root_relocation_without_consumer_replacement", func(t *testing.T) {
+		store := teststore.New(t)
+		tf := newTerraform(t, binary, store)
+		tf.sourceDirectory = filepath.Join(tf.dir, "inputs")
+		tf.file("a.bin", "alpha", "application/octet-stream")
+		tf.consumer = true
+		tf.writeConfig()
+		tf.run(0, "init", "-input=false")
+		tf.apply()
+		assertBody(t, store, "assets/a.bin", "alpha")
+		consumer := tf.run(0, "state", "show", "terraform_data.consumer")
+
+		second := t.TempDir()
+		if err := os.WriteFile(filepath.Join(second, "a.bin"), []byte("alpha"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(tf.sourceDirectory); err != nil {
+			t.Fatal(err)
+		}
+		tf.sourceDirectory = second
+		tf.writeConfig()
+		store.ResetStats()
+		tf.plan(0, "relocated.plan")
+		tf.run(0, "apply", "-input=false", "-auto-approve", "relocated.plan")
+		assertNoWrites(t, store.Stats())
+		if current := tf.run(0, "state", "show", "terraform_data.consumer"); current != consumer {
+			t.Fatal("changing only the provider-local root replaced its publication consumer")
+		}
+
+		// A real body change must use the new root, and source verification must
+		// still precede writes even for a previously acknowledged matching body.
+		if err := os.WriteFile(filepath.Join(second, "a.bin"), []byte("ALPHA"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		store.ResetStats()
+		tf.concurrency = 3
+		tf.writeConfig()
+		output := tf.run(1, "apply", "-input=false", "-auto-approve")
+		assertNoWrites(t, store.Stats())
+		if !strings.Contains(output, "sha256_mismatch") {
+			t.Fatalf("relative source mismatch lost its checksum diagnostic: %s", output)
+		}
+		tf.file("a.bin", "ALPHA", "application/octet-stream")
+		tf.writeConfig()
+		store.ResetStats()
+		tf.apply()
+		if stats := store.Stats(); stats.Put != 1 || stats.Delete != 0 {
+			t.Fatalf("changed relative source must upload exactly once: %+v", stats)
+		}
+		assertBody(t, store, "assets/a.bin", "ALPHA")
+	})
 	t.Run("diff_drift_saved_plan_and_retention", func(t *testing.T) {
 		store := teststore.New(t)
 		tf := newTerraform(t, binary, store)

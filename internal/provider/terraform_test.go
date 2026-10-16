@@ -32,6 +32,8 @@ type terraformFixture struct {
 	documents, prune, deleteOnDestroy              bool
 	etagHash                                       string
 	pruneKeyPattern                                string
+	sourceDirectory                                string
+	consumer                                       bool
 	endpoint, accessKey, secretKey, bucket, region string
 }
 
@@ -83,7 +85,11 @@ func newTerraform(t *testing.T, binary string, store *teststore.Store) *terrafor
 }
 func (tf *terraformFixture) file(key, body, contentType string) {
 	tf.t.Helper()
-	source := filepath.Join(tf.dir, "inputs", filepath.FromSlash(key))
+	directory := tf.sourceDirectory
+	if directory == "" {
+		directory = filepath.Join(tf.dir, "inputs")
+	}
+	source := filepath.Join(directory, filepath.FromSlash(key))
 	if err := os.MkdirAll(filepath.Dir(source), 0700); err != nil {
 		tf.t.Fatal(err)
 	}
@@ -91,6 +97,9 @@ func (tf *terraformFixture) file(key, body, contentType string) {
 		tf.t.Fatal(err)
 	}
 	hash := sha256.Sum256([]byte(body))
+	if tf.sourceDirectory != "" {
+		source = key
+	}
 	tf.files[key] = localFile{source: source, hash: hex.EncodeToString(hash[:]), contentType: contentType}
 }
 func (tf *terraformFixture) writeConfig() {
@@ -117,7 +126,15 @@ func (tf *terraformFixture) writeConfig() {
 		}
 		resources["s3sync_prune"] = map[string]any{"obsolete": prune}
 	}
+	if tf.consumer {
+		resources["terraform_data"] = map[string]any{"consumer": map[string]any{
+			"lifecycle": map[string]any{"replace_triggered_by": []string{"s3sync_files.assets"}},
+		}}
+	}
 	config := map[string]any{"terraform": map[string]any{"required_providers": map[string]any{"s3sync": map[string]any{"source": "marek-hanzal/s3sync", "version": "= 0.1.0"}}}, "provider": map[string]any{"s3sync": map[string]any{"endpoint": tf.endpoint, "region": tf.region, "access_key": tf.accessKey, "secret_key": tf.secretKey, "etag_hash": tf.etagHash, "max_attempts": tf.maxAttempts, "request_timeout_seconds": 20}}, "resource": resources}
+	if tf.sourceDirectory != "" {
+		config["provider"].(map[string]any)["s3sync"].(map[string]any)["source_directory"] = tf.sourceDirectory
+	}
 	if tf.etagHash == "" {
 		delete(config["provider"].(map[string]any)["s3sync"].(map[string]any), "etag_hash")
 	}

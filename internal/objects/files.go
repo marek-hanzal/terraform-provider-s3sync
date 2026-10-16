@@ -58,8 +58,8 @@ func ValidateFiles(files map[string]File) error {
 	}
 	for _, key := range sortedKeys(files) {
 		file := files[key]
-		if !filepath.IsAbs(file.Source) || hasControl(file.Source) {
-			return fmt.Errorf("object %q source must be an absolute local path", key)
+		if hasControl(file.Source) || (!filepath.IsAbs(file.Source) && (validKey(file.Source) != nil || strings.Contains(file.Source, ":") || filepath.VolumeName(file.Source) != "")) {
+			return fmt.Errorf("object %q source must be absolute or an unambiguous relative slash-separated path", key)
 		}
 		checksum, err := hex.DecodeString(file.SHA256)
 		if err != nil || len(checksum) != sha256.Size || file.SHA256 != strings.ToLower(file.SHA256) {
@@ -85,7 +85,8 @@ func ValidateKeys(keys []string) error {
 }
 
 // Digest frames each value so distinct manifests cannot share an ambiguous
-// concatenation. Source paths matter because they are part of the desired input.
+// concatenation. Configured source paths are desired input; provider-local roots
+// stay outside resource identity so relocating an identical manifest is a no-op.
 func Digest(files map[string]File) string {
 	digest := sha256.New()
 	for _, key := range sortedKeys(files) {

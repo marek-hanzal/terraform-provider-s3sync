@@ -55,7 +55,7 @@ func (r *filesResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 		"bucket": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"prefix": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Empty or a relative key prefix ending in '/'."},
 		"files": schema.MapNestedAttribute{Required: true, NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
-			"source":       schema.StringAttribute{Required: true, Description: "Absolute path to a regular local file."},
+			"source":       schema.StringAttribute{Required: true, Description: "Absolute local file path, or a relative slash-separated path inside provider source_directory. Relative paths cannot contain empty or dot segments, backslashes, colons or control characters."},
 			"sha256":       schema.StringAttribute{Required: true, Description: "Expected lowercase hexadecimal SHA-256; validated before any write."},
 			"content_type": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("application/octet-stream")},
 		}}},
